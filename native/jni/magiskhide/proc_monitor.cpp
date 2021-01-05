@@ -2,6 +2,7 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <pthread.h>
+#include <inttypes.h>
 #include <sys/ptrace.h>
 #include <sys/inotify.h>
 #include <sys/types.h>
@@ -246,15 +247,16 @@ static bool check_pid(int pid) {
     int uid = st.st_uid;
     auto it = uid_proc_map.end();
 
-    if (uid % 100000 > 90000) {
+    if (uid % 100000 >= 90000) {
         // Isolated process
         it = uid_proc_map.find(-1);
         if (it == uid_proc_map.end())
             goto not_target;
         for (auto &s : it->second) {
             if (str_starts(cmdline, s)) {
-                LOGI("proc_monitor: (isolated) [%s] PID=[%d] UID=[%d]\n", cmdline, pid, uid);
-                goto inject_and_hide;
+                goto check_and_hide;
+            } else {
+                goto not_target;
             }
         }
     }
@@ -265,38 +267,32 @@ static bool check_pid(int pid) {
     for (auto &s : it->second) {
         if (s != cmdline)
             continue;
-
-        if (str_ends(s, "_zygote")) {
-            LOGI("proc_monitor: (app zygote) [%s] PID=[%d] UID=[%d]\n", cmdline, pid, uid);
-            goto inject_and_hide;
-        }
-
-        // Double check whether ns is separated
-        read_ns(pid, &st);
-        for (auto &zit : zygote_map) {
-            if (zit.second.st_ino == st.st_ino &&
-                zit.second.st_dev == st.st_dev) {
-                // For some reason ns is not separated, abort
-                goto not_target;
-            }
-        }
-
-        // Finally this is our target!
-        // Detach from ptrace but should still remain stopped.
-        // The hide daemon will resume the process.
-        LOGI("proc_monitor: [%s] PID=[%d] UID=[%d]\n", cmdline, pid, uid);
-        detach_pid(pid, SIGSTOP);
-        hide_daemon(pid);
-        return true;
+        goto check_and_hide;
     }
+
+check_and_hide:
+    // Double check whether ns is separated
+    read_ns(pid, &st);
+    for (auto &zit : zygote_map) {
+        if (zit.second.st_ino == st.st_ino &&
+            zit.second.st_dev == st.st_dev) {
+            // For some reason ns is not separated, abort
+            LOGW("proc_monitor: mnt:[%" PRIu64 "] is not separated [%s] PID=[%d] UID=[%d]\n",
+                 st.st_ino, cmdline, pid, uid);
+            goto not_target;
+        }
+    }
+
+    // Finally this is our target!
+    // Detach from ptrace but should still remain stopped.
+    // The hide daemon will resume the process.
+    LOGI("proc_monitor: [%s] PID=[%d] UID=[%d]\n", cmdline, pid, uid);
+    detach_pid(pid, SIGSTOP);
+    hide_daemon(pid);
+    return true;
 
 not_target:
     PTRACE_LOG("[%s] is not our target\n", cmdline);
-    detach_pid(pid);
-    return true;
-
-inject_and_hide:
-    // TODO: handle isolated processes and app zygotes
     detach_pid(pid);
     return true;
 }
@@ -328,11 +324,14 @@ static void new_zygote(int pid) {
     auto it = zygote_map.find(pid);
     if (it != zygote_map.end()) {
         // Update namespace info
-        it->second = st;
+        if (it->second.st_ino != st.st_ino || it->second.st_dev != st.st_dev) {
+            LOGI("proc_monitor: update zygote PID=[%d] mnt:[%" PRIu64 "]\n", pid, st.st_ino);
+            it->second = st;
+        }
         return;
     }
 
-    LOGD("proc_monitor: ptrace zygote PID=[%d]\n", pid);
+    LOGI("proc_monitor: ptrace zygote PID=[%d] mnt:[%" PRIu64 "]\n", pid, st.st_ino);
     zygote_map[pid] = st;
 
     xptrace(PTRACE_ATTACH, pid);

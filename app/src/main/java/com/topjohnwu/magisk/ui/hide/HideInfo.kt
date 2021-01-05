@@ -39,6 +39,11 @@ class HideAppInfo(info: ApplicationInfo, pm: PackageManager, hideList: List<Cmdl
         pm: PackageManager,
         hideList: List<CmdlineHiddenItem>
     ): List<HideProcessInfo> {
+        val hidden = hideList.filter { it.packageName == packageName || it.packageName == ISOLATED_MAGIC }
+        fun createProcess(name: String, pkg: String = packageName): HideProcessInfo {
+            return HideProcessInfo(name, pkg, hidden.any { it.process == name })
+        }
+
         // Fetch full PackageInfo
         val baseFlag = MATCH_DISABLED_COMPONENTS or MATCH_UNINSTALLED_PACKAGES
         val packageInfo = try {
@@ -46,7 +51,7 @@ class HideAppInfo(info: ApplicationInfo, pm: PackageManager, hideList: List<Cmdl
             pm.getPackageInfo(packageName, baseFlag or request)
         } catch (e: NameNotFoundException) {
             // EdXposed hooked, issue#3276
-            return emptyList()
+            return listOf(createProcess(processName))
         } catch (e: Exception) {
             // Exceed binder data transfer limit, fetch each component type separately
             pm.getPackageInfo(packageName, baseFlag).apply {
@@ -55,11 +60,6 @@ class HideAppInfo(info: ApplicationInfo, pm: PackageManager, hideList: List<Cmdl
                 runCatching { receivers = pm.getPackageInfo(packageName, baseFlag or GET_RECEIVERS).receivers }
                 runCatching { providers = pm.getPackageInfo(packageName, baseFlag or GET_PROVIDERS).providers }
             }
-        }
-
-        val hidden = hideList.filter { it.packageName == packageName || it.packageName == ISOLATED_MAGIC }
-        fun createProcess(name: String, pkg: String = packageName): HideProcessInfo {
-            return HideProcessInfo(name, pkg, hidden.any { it.process == name })
         }
 
         var haveAppZygote = false
