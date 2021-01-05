@@ -4,7 +4,7 @@
     <!-- Static strings -->
     <string name="app_name" translatable="false">Magisk Manager</string>
     <string name="magisk" translatable="false">Magisk</string>
-    <string name="magiskhide" translatable="false">MagiskHide</string>
+    <string name="magiskhide" translatable="false">MagiskRoot</string>
     <string name="empty" translatable="false"/>
 
     <string name="topjohnwu" translatable="false">\@topjohnwu</string>
